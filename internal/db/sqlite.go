@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -22,8 +21,6 @@ type SQLiteProvider struct {
 	mu sync.RWMutex
 	db *sql.DB
 }
-
-// DDL creation moved to embedded Goose migrations.
 
 // SeriesMetadata SQL literals for the SQLite backend.
 //
@@ -195,6 +192,23 @@ func (p *SQLiteProvider) WithDB(f func(db *sql.DB)) {
 	f(p.db)
 }
 
+// sqliteBulkInsertPlaceholders returns the "(?, ?, ...), (?, ?, ...), ..."
+// placeholder list for a single INSERT statement covering `rows` rows of
+// `columns` values each, SQLite's positional-`?` style. This only needs a
+// SQLite variant: the one caller (Insert, below) always builds a single
+// multi-row INSERT for its own dialect; PostgreSQL's Insert uses a prepared
+// statement executed once per row instead, so there has never been a caller
+// for a "$N"-style bulk placeholder list.
+func sqliteBulkInsertPlaceholders(columns, rows int) string {
+	singleRow := "(" + strings.Repeat("?, ", columns-1) + "?)"
+
+	placeholders := make([]string, rows)
+	for i := range placeholders {
+		placeholders[i] = singleRow
+	}
+	return strings.Join(placeholders, ", ")
+}
+
 func (p *SQLiteProvider) Insert(ctx context.Context, queries []Query) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -208,10 +222,7 @@ func (p *SQLiteProvider) Insert(ctx context.Context, queries []Query) error {
 			ts, queryParam, timeParam, duration, statusCode, bodySize, fingerprint, labelMatchers, type, step, start, "end", totalQueryableSamples, peakSamples, httpHeaders
 		) VALUES `
 
-	// Get SQLite placeholder format
-	qc := NewSQLiteQueryContext()
-	placeholders, _, _ := qc.CreateInsertPlaceholders(15, len(queries))
-	query += placeholders
+	query += sqliteBulkInsertPlaceholders(15, len(queries))
 
 	values := make([]interface{}, 0, len(queries)*15)
 	for _, q := range queries {
@@ -373,35 +384,11 @@ func (p *SQLiteProvider) InsertRulesUsage(ctx context.Context, rulesUsage []Rule
 	// Serialize writes to avoid SQLITE_BUSY
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	// In-memory de-duplication and labels normalization
-	type ruleKey struct {
-		Serie      string
-		Kind       string
-		Group      string
-		Name       string
-		Expression string
-		Labels     string
-	}
 
-	dedup := make(map[ruleKey]struct{})
-	normalized := make([]RulesUsage, 0, len(rulesUsage))
-	for _, r := range rulesUsage {
-		labels := make([]string, len(r.Labels))
-		copy(labels, r.Labels)
-		sort.Strings(labels)
-		labelsJSON, err := json.Marshal(labels)
-		if err != nil {
-			return fmt.Errorf("failed to marshal labels to JSON: %w", err)
-		}
-		k := ruleKey{Serie: r.Serie, Kind: r.Kind, Group: r.GroupName, Name: r.Name, Expression: r.Expression, Labels: string(labelsJSON)}
-		if _, ok := dedup[k]; ok {
-			continue
-		}
-		dedup[k] = struct{}{}
-		r.Labels = labels
-		normalized = append(normalized, r)
+	normalized, err := normalizeRulesUsage(rulesUsage)
+	if err != nil {
+		return err
 	}
-
 	if len(normalized) == 0 {
 		return nil
 	}
@@ -610,48 +597,14 @@ func (p *SQLiteProvider) InsertDashboardUsage(ctx context.Context, dashboardUsag
 	// Serialize writes to avoid SQLITE_BUSY
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	// Dedup by (id, serie)
-	type dashKey struct{ Id, Serie string }
-	dedup := make(map[dashKey]DashboardUsage)
-	for _, d := range dashboardUsage {
-		dedup[dashKey{Id: d.Id, Serie: d.Serie}] = d
-	}
-	if len(dedup) == 0 {
-		return nil
-	}
-
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	stmt, err := tx.PrepareContext(ctx, `
+	items := dedupDashboardUsage(dashboardUsage)
+	now := time.Now().UTC()
+	return execUpsertMany(ctx, p.db, `
         INSERT INTO DashboardUsage (
             id, serie, name, url, created_at, first_seen_at, last_seen_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id, serie) DO UPDATE SET last_seen_at = excluded.last_seen_at, name = excluded.name, url = excluded.url
-    `)
-	if err != nil {
-		return fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	defer CloseResource(stmt)
-
-	now := time.Now().UTC()
-	for _, d := range dedup {
-		if _, err := stmt.ExecContext(ctx, d.Id, d.Serie, d.Name, d.URL, now, now, now); err != nil {
-			return fmt.Errorf("failed to execute upsert: %w", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	return nil
+    `, items, func(d DashboardUsage) []any { return []any{d.Id, d.Serie, d.Name, d.URL, now, now, now} })
 }
 
 func (p *SQLiteProvider) GetDashboardUsage(ctx context.Context, params DashboardUsageParams) (PagedResult, error) {
@@ -880,11 +833,11 @@ func (p *SQLiteProvider) getSeriesMetadataUnused(ctx context.Context, params Ser
 	// record_count = dashboard_count = query_count = 0, so sorting by any
 	// of those count columns is meaningless (all values tie at zero) and
 	// forces the planner to materialise the full unused subset before
-	// LIMIT can apply - which on cx10 (139k unused) cost seconds even for
-	// a 10-row page. Sorting by c.name lines up with the
-	// idx_metrics_usage_summary_is_unused partial index's name ordering,
-	// so the planner can index-scan + LIMIT in O(LIMIT) work. sortOrder is
-	// still honoured so ?sortOrder=desc inverts the alphabetical listing.
+	// LIMIT can apply - expensive when the unused set is large, as seen in
+	// practice. Sorting by c.name lines up with the idx_metrics_usage_summary_is_unused
+	// partial index's name ordering, so the planner can index-scan + LIMIT
+	// in O(LIMIT) work. sortOrder is still honoured so ?sortOrder=desc
+	// inverts the alphabetical listing.
 	query := BuildSafeQueryWithOrderBy(sqliteSeriesMetadataUnusedBaseSQL, "c", " LIMIT ? OFFSET ?", "name", params.SortOrder, ValidSeriesMetadataSortFields, "name", SeriesMetadataSortAliases)
 	rows, err := p.db.QueryContext(ctx, query,
 		params.Filter, params.Filter, params.Filter,
@@ -909,9 +862,8 @@ func (p *SQLiteProvider) getSeriesMetadataUnused(ctx context.Context, params Ser
 // (job, name) index) and INNER JOINs to metrics_usage_summary (filtered by
 // is_unused=TRUE) and metrics_catalog. This makes per-request work scale
 // with the size of the requested job's metric set, not with the entire
-// unused universe - the latter is what cratered cx10 when the operator's
-// ?usage=unused&job=kube-state-metrics request hit 139k unused metrics
-// looking for a sparse 57-row match.
+// unused universe, whose full scan for a sparse per-job match has been slow
+// in practice.
 func (p *SQLiteProvider) getSeriesMetadataUnusedJobScoped(ctx context.Context, params SeriesMetadataParams) (PagedResult, error) {
 	var total int
 	if err := p.db.QueryRowContext(ctx, sqliteSeriesMetadataUnusedJobCountSQL,
@@ -1098,58 +1050,19 @@ func (p *SQLiteProvider) UpsertMetricsCatalog(ctx context.Context, items []Metri
 }
 
 func (p *SQLiteProvider) UpsertMetricsJobIndex(ctx context.Context, items []MetricJobIndexItem) error {
-	if len(items) == 0 {
-		return nil
-	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	stmt, err := tx.PrepareContext(ctx, `
+	return execUpsertMany(ctx, p.db, `
 		INSERT INTO metrics_job_index(name, job, updated_at)
 		VALUES(?, ?, datetime('now'))
 		ON CONFLICT(name, job) DO UPDATE SET
 			updated_at = excluded.updated_at
-	`)
-	if err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("prepare: %w", err)
-	}
-	defer CloseResource(stmt)
-	for _, it := range items {
-		if _, err := stmt.ExecContext(ctx, it.Name, it.Job); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("exec: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	return nil
+	`, items, func(it MetricJobIndexItem) []any { return []any{it.Name, it.Job} })
 }
 
 // ListJobs returns the distinct list of jobs from metrics_job_index
 func (p *SQLiteProvider) ListJobs(ctx context.Context) ([]string, error) {
-	rows, err := ExecuteQuery(ctx, p.db, `SELECT DISTINCT job FROM metrics_job_index ORDER BY job`)
-	if err != nil {
-		return nil, err
-	}
-	defer CloseResource(rows)
-
-	var jobs []string
-	for rows.Next() {
-		var job string
-		if err := rows.Scan(&job); err != nil {
-			return nil, fmt.Errorf("scan job: %w", err)
-		}
-		jobs = append(jobs, job)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iter jobs: %w", err)
-	}
-	return jobs, nil
+	return listJobs(ctx, p.db)
 }
 
 // refreshMetricsUsageSummaryQuerySQLite is kept as a package-level const so
@@ -1210,14 +1123,7 @@ const refreshMetricsUsageSummaryQuerySQLite = `
 
 func (p *SQLiteProvider) RefreshMetricsUsageSummary(ctx context.Context, tr TimeRange) error {
 	from, to := PrepareTimeRange(tr, "sqlite")
-	res, err := p.db.ExecContext(ctx, refreshMetricsUsageSummaryQuerySQLite, to, from, to, from, from, to, from)
-	if err != nil {
-		return fmt.Errorf("refresh summary: %w", err)
-	}
-	if n, err := res.RowsAffected(); err == nil {
-		warnIfSummaryRefreshWasNoOp(ctx, p.db, n, "sqlite")
-	}
-	return nil
+	return execRefreshSummary(ctx, p.db, refreshMetricsUsageSummaryQuerySQLite, "sqlite", to, from, to, from, from, to, from)
 }
 
 // GetQueryTypes returns the total number of queries, the percentage of instant queries, and the percentage of range queries.
@@ -1677,8 +1583,6 @@ func (p *SQLiteProvider) GetQueryTimeRangeDistribution(ctx context.Context, tr T
 
 	return results, nil
 }
-
-// GetRecentQueries removed (endpoint deprecated)
 
 // GetQueryExpressions aggregates queries by fingerprint for SQLite
 func (p *SQLiteProvider) GetQueryExpressions(ctx context.Context, params QueryExpressionsParams) (PagedResult, error) {

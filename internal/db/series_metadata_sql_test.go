@@ -12,12 +12,9 @@ import (
 )
 
 // TestSeriesMetadataSQLConsts_Shape asserts the structural fingerprints of
-// each named SQL constant backing GetSeriesMetadata. These tests are not
-// trying to validate semantics (the integration tests do that) - they exist
-// so that the SQL string accidentally drifting in a way the reviewer would
-// catch (e.g. losing the is_unused predicate, losing the job filter, or
-// drifting placeholder count) trips a fast unit-level check before any
-// container is spun up.
+// each named SQL constant backing GetSeriesMetadata - the is_unused
+// predicate, the job filter, and placeholder count - as a fast unit-level
+// check for SQL string drift, with no container required.
 func TestSeriesMetadataSQLConsts_Shape(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -215,10 +212,6 @@ func TestSeriesMetadataSQLConsts_PreparesSQLite(t *testing.T) {
 	p, cleanup := newTestSQLiteProvider(t)
 	t.Cleanup(cleanup)
 
-	var rawDB *sql.DB
-	p.WithDB(func(db *sql.DB) { rawDB = db })
-	require.NotNil(t, rawDB, "WithDB must surface the underlying *sql.DB")
-
 	type row struct {
 		name string
 		sql  string
@@ -227,13 +220,6 @@ func TestSeriesMetadataSQLConsts_PreparesSQLite(t *testing.T) {
 		{"sqliteSeriesMetadataCountSQL", sqliteSeriesMetadataCountSQL},
 		{"sqliteSeriesMetadataUnusedCountSQL", sqliteSeriesMetadataUnusedCountSQL},
 		{"sqliteSeriesMetadataUnusedJobCountSQL", sqliteSeriesMetadataUnusedJobCountSQL},
-	}
-	for _, r := range staticCounts {
-		t.Run("count/"+r.name, func(t *testing.T) {
-			stmt, err := rawDB.PrepareContext(context.Background(), r.sql)
-			require.NoError(t, err, "%s must prepare against SQLite", r.name)
-			require.NoError(t, stmt.Close())
-		})
 	}
 
 	// Base queries always flow through BuildSafeQueryWithOrderBy before
@@ -263,17 +249,33 @@ func TestSeriesMetadataSQLConsts_PreparesSQLite(t *testing.T) {
 				ValidSeriesMetadataSortFields, "name", SeriesMetadataSortAliases),
 		},
 	}
-	for _, q := range baseQueries {
-		t.Run("base/"+q.name, func(t *testing.T) {
-			assert.Contains(t, q.built, "ORDER BY",
-				"built query must include ORDER BY clause")
-			assert.Contains(t, q.built, "LIMIT ? OFFSET ?",
-				"built query must include LIMIT clause")
-			stmt, err := rawDB.PrepareContext(context.Background(), q.built)
-			require.NoError(t, err, "%s must prepare against SQLite", q.name)
-			require.NoError(t, stmt.Close())
-		})
-	}
+
+	// All subtests run synchronously (none call t.Parallel()), so it's safe
+	// to keep them inside one WithDB callback rather than capturing the raw
+	// *sql.DB into an outer variable that would outlive it.
+	p.WithDB(func(rawDB *sql.DB) {
+		require.NotNil(t, rawDB, "WithDB must surface the underlying *sql.DB")
+
+		for _, r := range staticCounts {
+			t.Run("count/"+r.name, func(t *testing.T) {
+				stmt, err := rawDB.PrepareContext(context.Background(), r.sql)
+				require.NoError(t, err, "%s must prepare against SQLite", r.name)
+				require.NoError(t, stmt.Close())
+			})
+		}
+
+		for _, q := range baseQueries {
+			t.Run("base/"+q.name, func(t *testing.T) {
+				assert.Contains(t, q.built, "ORDER BY",
+					"built query must include ORDER BY clause")
+				assert.Contains(t, q.built, "LIMIT ? OFFSET ?",
+					"built query must include LIMIT clause")
+				stmt, err := rawDB.PrepareContext(context.Background(), q.built)
+				require.NoError(t, err, "%s must prepare against SQLite", q.name)
+				require.NoError(t, stmt.Close())
+			})
+		}
+	})
 }
 
 // TestSeriesMetadataSQLConsts_PreparesPostgreSQL mirrors the SQLite check
@@ -284,10 +286,6 @@ func TestSeriesMetadataSQLConsts_PreparesPostgreSQL(t *testing.T) {
 	p, cleanup := newTestPostgreSQLProvider(t)
 	t.Cleanup(cleanup)
 
-	var rawDB *sql.DB
-	p.WithDB(func(db *sql.DB) { rawDB = db })
-	require.NotNil(t, rawDB, "WithDB must surface the underlying *sql.DB")
-
 	staticCounts := []struct {
 		name string
 		sql  string
@@ -295,13 +293,6 @@ func TestSeriesMetadataSQLConsts_PreparesPostgreSQL(t *testing.T) {
 		{"pgSeriesMetadataCountSQL", pgSeriesMetadataCountSQL},
 		{"pgSeriesMetadataUnusedCountSQL", pgSeriesMetadataUnusedCountSQL},
 		{"pgSeriesMetadataUnusedJobCountSQL", pgSeriesMetadataUnusedJobCountSQL},
-	}
-	for _, r := range staticCounts {
-		t.Run("count/"+r.name, func(t *testing.T) {
-			stmt, err := rawDB.PrepareContext(context.Background(), r.sql)
-			require.NoError(t, err, "%s must prepare against PostgreSQL", r.name)
-			require.NoError(t, stmt.Close())
-		})
 	}
 
 	baseQueries := []struct {
@@ -327,12 +318,28 @@ func TestSeriesMetadataSQLConsts_PreparesPostgreSQL(t *testing.T) {
 				ValidSeriesMetadataSortFields, "name", SeriesMetadataSortAliases),
 		},
 	}
-	for _, q := range baseQueries {
-		t.Run("base/"+q.name, func(t *testing.T) {
-			assert.Contains(t, q.built, "ORDER BY")
-			stmt, err := rawDB.PrepareContext(context.Background(), q.built)
-			require.NoError(t, err, "%s must prepare against PostgreSQL", q.name)
-			require.NoError(t, stmt.Close())
-		})
-	}
+
+	// All subtests run synchronously (none call t.Parallel()), so it's safe
+	// to keep them inside one WithDB callback rather than capturing the raw
+	// *sql.DB into an outer variable that would outlive it.
+	p.WithDB(func(rawDB *sql.DB) {
+		require.NotNil(t, rawDB, "WithDB must surface the underlying *sql.DB")
+
+		for _, r := range staticCounts {
+			t.Run("count/"+r.name, func(t *testing.T) {
+				stmt, err := rawDB.PrepareContext(context.Background(), r.sql)
+				require.NoError(t, err, "%s must prepare against PostgreSQL", r.name)
+				require.NoError(t, stmt.Close())
+			})
+		}
+
+		for _, q := range baseQueries {
+			t.Run("base/"+q.name, func(t *testing.T) {
+				assert.Contains(t, q.built, "ORDER BY")
+				stmt, err := rawDB.PrepareContext(context.Background(), q.built)
+				require.NoError(t, err, "%s must prepare against PostgreSQL", q.name)
+				require.NoError(t, stmt.Close())
+			})
+		}
+	})
 }

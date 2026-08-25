@@ -1,10 +1,10 @@
 -- +goose Up
--- Covering index for RefreshMetricsUsageSummary's RulesUsage subquery: it
--- aggregates GROUP BY serie with no serie/kind predicate, so
+-- Covering index for the usage-summary refresh's rules aggregation: it
+-- groups by serie with no serie/kind predicate, so
 -- idx_rulesusage_presence (serie, kind, first_seen_at, last_seen_at) can't
 -- support it and the planner falls back to a full table scan.
--- idx_rulesusage_presence stays untouched - splitting it would regress
--- GetRulesUsage's equality-prefix lookup. Leading on last_seen_at makes the
+-- idx_rulesusage_presence stays untouched - splitting it would regress the
+-- equality-prefix lookup it currently serves. Leading on last_seen_at makes the
 -- range condition indexable; serie/kind ride along as trailing key columns
 -- (no INCLUDE clause in SQLite) so the aggregate is still satisfiable from
 -- the index alone. See

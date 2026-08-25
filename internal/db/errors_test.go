@@ -104,7 +104,6 @@ func TestCloseResource(t *testing.T) {
 					CloseResource(tt.resource)
 				})
 			} else {
-				// Should not panic
 				assert.NotPanics(t, func() {
 					CloseResource(tt.resource)
 				})
@@ -241,46 +240,36 @@ func TestSchemaError(t *testing.T) {
 }
 
 func TestErrorTypes_Unwrap(t *testing.T) {
-	// Test that our custom error types can be unwrapped
 	originalErr := errors.New("original error")
 
-	// Test ValidationError
 	validationErr := ValidationError("field", "message")
 	assert.Error(t, validationErr)
 
-	// Test ErrorWithOperation
 	wrappedErr := ErrorWithOperation(originalErr, "operation")
 	assert.Error(t, wrappedErr)
 	assert.Contains(t, wrappedErr.Error(), "original error")
 
-	// Test QueryError
 	queryErr := QueryError(originalErr, "query", "details")
 	assert.Error(t, queryErr)
 	assert.Contains(t, queryErr.Error(), "original error")
 }
 
 func TestErrorTypes_Comparison(t *testing.T) {
-	// Test that errors can be compared
 	err1 := ValidationError("field", "message")
 	err2 := ValidationError("field", "message")
 	err3 := ValidationError("different", "message")
 
-	// Same error should be equal
 	assert.Equal(t, err1.Error(), err2.Error())
-
-	// Different errors should not be equal
 	assert.NotEqual(t, err1.Error(), err3.Error())
 }
 
 func TestErrorTypes_Formatting(t *testing.T) {
-	// Test error formatting with special characters
 	err := ValidationError("field name", "message with 'quotes' and \"double quotes\"")
 	assert.Contains(t, err.Error(), "field name")
 	assert.Contains(t, err.Error(), "message with 'quotes' and \"double quotes\"")
 }
 
 func TestErrorTypes_EmptyValues(t *testing.T) {
-	// Test error creation with empty values
 	validationErr := ValidationError("", "")
 	assert.Equal(t, "validation error for : ", validationErr.Error())
 
@@ -289,14 +278,12 @@ func TestErrorTypes_EmptyValues(t *testing.T) {
 }
 
 func TestErrorTypes_UnicodeSupport(t *testing.T) {
-	// Test error creation with unicode characters
 	err := ValidationError("fält", "meddelande med åäö")
 	assert.Contains(t, err.Error(), "fält")
 	assert.Contains(t, err.Error(), "meddelande med åäö")
 }
 
 func TestErrorTypes_LongMessages(t *testing.T) {
-	// Test error creation with long messages
 	longMessage := "This is a very long error message that contains many characters and should be handled properly by the error system without any issues or truncation"
 	err := ValidationError("field", longMessage)
 	assert.Contains(t, err.Error(), longMessage)
@@ -304,7 +291,6 @@ func TestErrorTypes_LongMessages(t *testing.T) {
 }
 
 func TestStandardErrors(t *testing.T) {
-	// Test that standard errors are properly defined
 	assert.Error(t, ErrNoResults)
 	assert.Error(t, ErrInvalidScan)
 	assert.Error(t, ErrInvalidQuery)

@@ -159,7 +159,8 @@ const pgSeriesMetadataUnusedJobBaseSQL = `
                 END)
     `
 
-// Non-breaking alias for future rename migration
+// PostgreSQLProvider is an alias for PostGreSQLProvider; new code should
+// prefer this correctly-cased name.
 type PostgreSQLProvider = PostGreSQLProvider
 
 func (p *PostGreSQLProvider) WithDB(f func(db *sql.DB)) {
@@ -170,8 +171,6 @@ func (p *PostGreSQLProvider) WithDB(f func(db *sql.DB)) {
 func metricMatcherJSON(metric string) string {
 	return fmt.Sprintf(`[{"__name__": "%s"}]`, metric)
 }
-
-// DDL creation moved to embedded Goose migrations.
 
 func RegisterPostGreSQLFlags(flagSet *flag.FlagSet) {
 	flagSet.DurationVar(&config.DefaultConfig.Database.PostgreSQL.DialTimeout, "postgresql-dial-timeout", 5*time.Second, "Timeout to dial postgresql.")
@@ -242,8 +241,6 @@ func NewPostgreSQLProvider(ctx context.Context, postgresConfig config.PostgreSQL
 	} else {
 		db.SetConnMaxLifetime(30 * time.Minute)
 	}
-	// Set MaxIdleTime to prevent stale connections
-	// Idle connections older than the configured time will be closed
 	if postgresConfig.ConnMaxIdleTime > 0 {
 		db.SetConnMaxIdleTime(postgresConfig.ConnMaxIdleTime)
 	} else {
@@ -273,7 +270,6 @@ func (p *PostGreSQLProvider) Insert(ctx context.Context, queries []Query) error 
 		return nil
 	}
 
-	// Use a prepared INSERT to batch rows within a single transaction
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return QueryError(err, "begin insert tx", "")
@@ -431,67 +427,13 @@ func (p *PostGreSQLProvider) GetQueriesBySerieName(
 }
 
 func (p *PostGreSQLProvider) InsertRulesUsage(ctx context.Context, rulesUsage []RulesUsage) error {
-	// In-memory de-dup in case payload contains duplicates
-	type ruleKey struct {
-		Serie      string
-		Kind       string
-		Group      string
-		Name       string
-		Expression string
-		Labels     string
+	normalized, err := normalizeRulesUsage(rulesUsage)
+	if err != nil {
+		return err
 	}
-
-	dedup := make(map[ruleKey]struct{})
-	normalized := make([]RulesUsage, 0, len(rulesUsage))
-	for _, r := range rulesUsage {
-		// Normalize labels order for stable JSON equality
-		labels := make([]string, len(r.Labels))
-		copy(labels, r.Labels)
-		sort.Strings(labels)
-		labelsJSON, err := json.Marshal(labels)
-		if err != nil {
-			return fmt.Errorf("failed to marshal labels to JSON: %w", err)
-		}
-		k := ruleKey{Serie: r.Serie, Kind: r.Kind, Group: r.GroupName, Name: r.Name, Expression: r.Expression, Labels: string(labelsJSON)}
-		if _, ok := dedup[k]; ok {
-			continue
-		}
-		dedup[k] = struct{}{}
-		r.Labels = labels
-		normalized = append(normalized, r)
-	}
-
 	if len(normalized) == 0 {
 		return nil
 	}
-
-	// Sort by the same composite key as the ON CONFLICT target below before
-	// upserting, so this function stays safe under concurrent calls with
-	// overlapping rows in any order - the same deadlock precondition as
-	// #592.
-	sort.Slice(normalized, func(i, j int) bool {
-		a, b := normalized[i], normalized[j]
-		if a.Serie != b.Serie {
-			return a.Serie < b.Serie
-		}
-		if a.Kind != b.Kind {
-			return a.Kind < b.Kind
-		}
-		if a.GroupName != b.GroupName {
-			return a.GroupName < b.GroupName
-		}
-		if a.Name != b.Name {
-			return a.Name < b.Name
-		}
-		if a.Expression != b.Expression {
-			return a.Expression < b.Expression
-		}
-		// labels is part of the ON CONFLICT target too - two rows can
-		// share every other field and still be distinct conflict targets
-		// differing only in labels. Each item's Labels is already sorted
-		// (a few lines above), so joining is a stable, comparable form.
-		return strings.Join(a.Labels, ",") < strings.Join(b.Labels, ",")
-	})
 
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -672,65 +614,15 @@ func (p *PostGreSQLProvider) GetRulesUsage(ctx context.Context, params RulesUsag
 }
 
 func (p *PostGreSQLProvider) InsertDashboardUsage(ctx context.Context, dashboardUsage []DashboardUsage) error {
-	// In-memory dedup by (id, serie) keeping last name/url
-	type dashKey struct{ Id, Serie string }
-	dedup := make(map[dashKey]DashboardUsage)
-	for _, d := range dashboardUsage {
-		k := dashKey{Id: d.Id, Serie: d.Serie}
-		dedup[k] = d
-	}
-	if len(dedup) == 0 {
-		return nil
-	}
-
-	// Collect into a slice and sort by (id, serie) - the same ON CONFLICT
-	// target below - instead of iterating the dedup map directly, so this
-	// function stays safe under concurrent calls with overlapping rows in
-	// any order - the same deadlock precondition as #592.
-	normalized := make([]DashboardUsage, 0, len(dedup))
-	for _, d := range dedup {
-		normalized = append(normalized, d)
-	}
-	sort.Slice(normalized, func(i, j int) bool {
-		if normalized[i].Id != normalized[j].Id {
-			return normalized[i].Id < normalized[j].Id
-		}
-		return normalized[i].Serie < normalized[j].Serie
-	})
-
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	stmt, err := tx.PrepareContext(ctx, `
+	items := dedupDashboardUsage(dashboardUsage)
+	now := time.Now().UTC()
+	return execUpsertMany(ctx, p.db, `
         INSERT INTO DashboardUsage (
             id, serie, name, url, created_at, first_seen_at, last_seen_at
         ) VALUES ($1, $2, $3, $4, $5, $5, $5)
         ON CONFLICT (id, serie)
         DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at, name = EXCLUDED.name, url = EXCLUDED.url
-    `)
-	if err != nil {
-		return fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	defer CloseResource(stmt)
-
-	now := time.Now().UTC()
-	for _, d := range normalized {
-		if _, err := stmt.ExecContext(ctx, d.Id, d.Serie, d.Name, d.URL, now); err != nil {
-			return fmt.Errorf("failed to execute upsert: %w", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	return nil
+    `, items, func(d DashboardUsage) []any { return []any{d.Id, d.Serie, d.Name, d.URL, now} })
 }
 
 func (p *PostGreSQLProvider) GetDashboardUsage(ctx context.Context, params DashboardUsageParams) (PagedResult, error) {
@@ -922,11 +814,11 @@ func (p *PostGreSQLProvider) getSeriesMetadataUnused(ctx context.Context, params
 	// record_count = dashboard_count = query_count = 0, so sorting by any
 	// of those count columns is meaningless (all values tie at zero) and
 	// forces the planner to materialise the full unused subset before
-	// LIMIT can apply - which on cx10 (139k unused) cost seconds even for
-	// a 10-row page. Sorting by c.name lines up with the
-	// idx_metrics_usage_summary_is_unused partial index's name ordering,
-	// so the planner can index-scan + LIMIT in O(LIMIT) work. sortOrder is
-	// still honoured so ?sortOrder=desc inverts the alphabetical listing.
+	// LIMIT can apply - expensive when the unused set is large, as seen in
+	// practice. Sorting by c.name lines up with the idx_metrics_usage_summary_is_unused
+	// partial index's name ordering, so the planner can index-scan + LIMIT
+	// in O(LIMIT) work. sortOrder is still honoured so ?sortOrder=desc
+	// inverts the alphabetical listing.
 	query := BuildSafeQueryWithOrderBy(pgSeriesMetadataUnusedBaseSQL, "c", " LIMIT $3 OFFSET $4", "name", params.SortOrder, ValidSeriesMetadataSortFields, "name", SeriesMetadataSortAliases)
 	rows, err := p.db.QueryContext(ctx, query, params.Filter, params.Type, params.PageSize, (params.Page-1)*params.PageSize)
 	if err != nil {
@@ -947,9 +839,8 @@ func (p *PostGreSQLProvider) getSeriesMetadataUnused(ctx context.Context, params
 // (job, name) index) and INNER JOINs to metrics_usage_summary (filtered by
 // is_unused=TRUE) and metrics_catalog. This makes per-request work scale
 // with the size of the requested job's metric set, not with the entire
-// unused universe - the latter is what cratered cx10 when the operator's
-// ?usage=unused&job=kube-state-metrics request hit 139k unused metrics
-// looking for a sparse 57-row match.
+// unused universe, whose full scan for a sparse per-job match has been slow
+// in practice.
 func (p *PostGreSQLProvider) getSeriesMetadataUnusedJobScoped(ctx context.Context, params SeriesMetadataParams) (PagedResult, error) {
 	var total int
 	if err := p.db.QueryRowContext(ctx, pgSeriesMetadataUnusedJobCountSQL, params.Filter, params.Type, params.Job).Scan(&total); err != nil {
@@ -1085,7 +976,7 @@ func (p *PostGreSQLProvider) GetSeriesMetadataByNames(ctx context.Context, names
 //   - Sorting guarantees every call, however many run concurrently,
 //     always acquires metrics_catalog row locks in the same order. Two
 //     concurrent calls upserting overlapping rows in different orders is
-//     Postgres's own documented deadlock precondition (#592).
+//     Postgres's own documented deadlock precondition.
 //   - De-duplication is required independently: a single bulk
 //     INSERT ... ON CONFLICT DO UPDATE statement errors ("ON CONFLICT DO
 //     UPDATE command cannot affect row a second time") if its own input
@@ -1235,27 +1126,17 @@ const refreshMetricsUsageSummaryQueryPostgreSQL = `
 
 func (p *PostGreSQLProvider) RefreshMetricsUsageSummary(ctx context.Context, tr TimeRange) error {
 	from, to := PrepareTimeRange(tr, "postgresql")
-	res, err := p.db.ExecContext(ctx, refreshMetricsUsageSummaryQueryPostgreSQL, from, to)
-	if err != nil {
-		return fmt.Errorf("refresh summary: %w", err)
-	}
-	if n, err := res.RowsAffected(); err == nil {
-		warnIfSummaryRefreshWasNoOp(ctx, p.db, n, "postgresql")
-	}
-	return nil
+	return execRefreshSummary(ctx, p.db, refreshMetricsUsageSummaryQueryPostgreSQL, "postgresql", from, to)
 }
 
 func (p *PostGreSQLProvider) UpsertMetricsJobIndex(ctx context.Context, items []MetricJobIndexItem) error {
-	if len(items) == 0 {
-		return nil
-	}
 	// Sort by (name, job) before upserting, so this function stays safe
 	// under concurrent calls with overlapping rows in any order - the same
-	// deadlock precondition as #592. Unlike UpsertMetricsCatalog, no
-	// de-duplication is needed: the per-row loop stays as-is, so a
-	// repeated (name, job) pair within one call is just two separate
-	// statements, not the single-statement "ON CONFLICT DO UPDATE command
-	// cannot affect row a second time" case that requires it there.
+	// deadlock precondition upsertMetricsCatalogItems guards against.
+	// Unlike UpsertMetricsCatalog, no de-duplication is needed: a repeated
+	// (name, job) pair within one call is just two separate statements, not
+	// the single-statement "ON CONFLICT DO UPDATE command cannot affect row
+	// a second time" case that requires it there.
 	sorted := make([]MetricJobIndexItem, len(items))
 	copy(sorted, items)
 	sort.Slice(sorted, func(i, j int) bool {
@@ -1264,54 +1145,17 @@ func (p *PostGreSQLProvider) UpsertMetricsJobIndex(ctx context.Context, items []
 		}
 		return sorted[i].Job < sorted[j].Job
 	})
-
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	stmt, err := tx.PrepareContext(ctx, `
+	return execUpsertMany(ctx, p.db, `
 		INSERT INTO metrics_job_index(name, job, updated_at)
 		VALUES ($1, $2, NOW())
 		ON CONFLICT(name, job) DO UPDATE SET
 		  updated_at = EXCLUDED.updated_at
-	`)
-	if err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("prepare: %w", err)
-	}
-	defer CloseResource(stmt)
-	for _, it := range sorted {
-		if _, err := stmt.ExecContext(ctx, it.Name, it.Job); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("exec: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	return nil
+	`, sorted, func(it MetricJobIndexItem) []any { return []any{it.Name, it.Job} })
 }
 
 // ListJobs returns the distinct list of jobs known in metrics_job_index
 func (p *PostGreSQLProvider) ListJobs(ctx context.Context) ([]string, error) {
-	rows, err := ExecuteQuery(ctx, p.db, `SELECT DISTINCT job FROM metrics_job_index ORDER BY job`)
-	if err != nil {
-		return nil, err
-	}
-	defer CloseResource(rows)
-
-	var jobs []string
-	for rows.Next() {
-		var job string
-		if err := rows.Scan(&job); err != nil {
-			return nil, fmt.Errorf("scan job: %w", err)
-		}
-		jobs = append(jobs, job)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iter jobs: %w", err)
-	}
-	return jobs, nil
+	return listJobs(ctx, p.db)
 }
 
 func (p *PostGreSQLProvider) GetQueryTypes(ctx context.Context, tr TimeRange, fingerprint string) (*QueryTypesResult, error) {
@@ -1732,8 +1576,6 @@ func (p *PostGreSQLProvider) GetQueryTimeRangeDistribution(ctx context.Context, 
 	}
 	return results, nil
 }
-
-// GetRecentQueries removed (endpoint deprecated)
 
 // GetQueryExpressions aggregates queries by fingerprint returning executions, avgDuration, errorRatePercent, peakSamples and latest query text
 func (p *PostGreSQLProvider) GetQueryExpressions(ctx context.Context, params QueryExpressionsParams) (PagedResult, error) {

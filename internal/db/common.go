@@ -7,101 +7,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
+	"strings"
 	"time"
 )
-
-// QueryBuildingContext holds the context for building SQL queries
-type QueryBuildingContext struct {
-	Dialect       string
-	PlaceholderFn func(int) string
-}
-
-// NewPostgreSQLQueryContext creates a query context for PostgreSQL
-func NewPostgreSQLQueryContext() *QueryBuildingContext {
-	return &QueryBuildingContext{
-		Dialect: "postgresql",
-		PlaceholderFn: func(i int) string {
-			return fmt.Sprintf("$%d", i)
-		},
-	}
-}
-
-// NewSQLiteQueryContext creates a query context for SQLite
-func NewSQLiteQueryContext() *QueryBuildingContext {
-	return &QueryBuildingContext{
-		Dialect: "sqlite",
-		PlaceholderFn: func(i int) string {
-			return "?"
-		},
-	}
-}
-
-// CreateInsertPlaceholders builds the appropriate placeholders for an INSERT statement
-func (qc *QueryBuildingContext) CreateInsertPlaceholders(columns, rows int) (string, []interface{}, error) {
-	if qc.Dialect == "postgresql" {
-		return createPostgreSQLInsertPlaceholders(columns, rows)
-	}
-	return createSQLiteInsertPlaceholders(columns, rows)
-}
-
-// ParseJSONParams is a helper for handling JSON parameters
-func ParseJSONParams(params interface{}) (string, error) {
-	if params == nil {
-		return "", nil
-	}
-	jsonData, err := json.Marshal(params)
-	if err != nil {
-		return "", ErrorWithOperation(err, "marshaling JSON params")
-	}
-	return string(jsonData), nil
-}
-
-// Helper for SQLite insert placeholders
-func createSQLiteInsertPlaceholders(columns, rows int) (string, []interface{}, error) {
-	placeholders := ""
-	values := make([]interface{}, 0, columns*rows)
-
-	singleRowPlaceholders := "(" + "?, "
-	for i := 1; i < columns; i++ {
-		if i == columns-1 {
-			singleRowPlaceholders += "?)"
-		} else {
-			singleRowPlaceholders += "?, "
-		}
-	}
-
-	for i := 0; i < rows; i++ {
-		placeholders += singleRowPlaceholders
-		if i < rows-1 {
-			placeholders += ", "
-		}
-	}
-
-	return placeholders, values, nil
-}
-
-// Helper for PostgreSQL insert placeholders
-func createPostgreSQLInsertPlaceholders(columns, rows int) (string, []interface{}, error) {
-	placeholders := ""
-	values := make([]interface{}, 0, columns*rows)
-
-	for i := 0; i < rows; i++ {
-		placeholders += "("
-		for j := 0; j < columns; j++ {
-			placeholders += fmt.Sprintf("$%d", i*columns+j+1)
-			if j < columns-1 {
-				placeholders += ", "
-			}
-		}
-		placeholders += ")"
-
-		if i < rows-1 {
-			placeholders += ", "
-		}
-	}
-
-	return placeholders, values, nil
-}
 
 // ExecuteQuery is a helper function to execute a query with error handling
 func ExecuteQuery(ctx context.Context, db *sql.DB, query string, args ...interface{}) (*sql.Rows, error) {
@@ -118,7 +27,6 @@ func CloseResource(closer io.Closer) {
 		return
 	}
 	if err := closer.Close(); err != nil {
-		// Log the error but don't panic
 		slog.Error("Error closing resource", "error", err)
 	}
 }
@@ -163,14 +71,13 @@ func PrepareTimeRange(tr TimeRange, dialect string) (string, string) {
 	return tr.Format(SQLiteTimeFormat)
 }
 
-// warnIfSummaryRefreshWasNoOp logs when RefreshMetricsUsageSummary's INSERT
-// touched zero rows while metrics_catalog is non-empty. That combination
-// means every catalog row failed the last_synced_at freshness filter (see
-// https://github.com/nicolastakashi/prom-analytics-proxy/issues/579) - most
-// likely metadata sync has stopped advancing last_synced_at (disabled, or a
+// warnIfSummaryRefreshWasNoOp logs when a summary refresh's INSERT touched
+// zero rows while metrics_catalog is non-empty. That combination means every
+// catalog row failed the last_synced_at freshness filter - most likely
+// metadata sync has stopped advancing last_synced_at (disabled, or a
 // seen_ttl raised above inventory.time_window) - which otherwise surfaces as
-// a silently frozen summary with no error, the same failure class that issue
-// was about.
+// a silently frozen summary with no error. See
+// https://github.com/nicolastakashi/prom-analytics-proxy/issues/579.
 func warnIfSummaryRefreshWasNoOp(ctx context.Context, db *sql.DB, rowsAffected int64, dialect string) {
 	if rowsAffected > 0 {
 		return
@@ -184,6 +91,173 @@ func warnIfSummaryRefreshWasNoOp(ctx context.Context, db *sql.DB, rowsAffected i
 			"every row failed the last_synced_at freshness filter - check that metadata sync is advancing last_synced_at",
 			"dialect", dialect)
 	}
+}
+
+// execRefreshSummary runs RefreshMetricsUsageSummary's INSERT ... ON
+// CONFLICT statement and surfaces the zero-rows-affected warning
+// (warnIfSummaryRefreshWasNoOp) - the only two things both backends do
+// identically around their own dialect-specific query text and bind args.
+func execRefreshSummary(ctx context.Context, db *sql.DB, query string, dialect string, args ...any) error {
+	res, err := db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("refresh summary: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil {
+		warnIfSummaryRefreshWasNoOp(ctx, db, n, dialect)
+	}
+	return nil
+}
+
+// listJobs returns the distinct list of jobs known in metrics_job_index.
+// Shared verbatim across backends - metrics_job_index has no dialect-specific
+// columns or types, so there is nothing for either provider to specialize.
+func listJobs(ctx context.Context, db *sql.DB) ([]string, error) {
+	rows, err := ExecuteQuery(ctx, db, `SELECT DISTINCT job FROM metrics_job_index ORDER BY job`)
+	if err != nil {
+		return nil, err
+	}
+	defer CloseResource(rows)
+
+	var jobs []string
+	for rows.Next() {
+		var job string
+		if err := rows.Scan(&job); err != nil {
+			return nil, fmt.Errorf("scan job: %w", err)
+		}
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iter jobs: %w", err)
+	}
+	return jobs, nil
+}
+
+// execUpsertMany runs one INSERT/upsert statement per item inside a single
+// transaction, sharing the prepare/loop/commit/rollback control flow that
+// would otherwise be duplicated identically across backends. query must be
+// the complete, dialect-correct SQL text - including that backend's own
+// placeholder style and any conflict-clause casing - execUpsertMany does not
+// touch the SQL itself, only the Go control flow around running it once per
+// item. Callers remain responsible for their own locking (e.g. SQLite's
+// single-writer mutex) and any pre-processing (e.g. deduplication).
+//
+// items must already be in the order the caller wants upserted: this
+// function does not sort. Callers must pre-sort items by their ON CONFLICT
+// target, so concurrent calls with overlapping rows always acquire row locks
+// in the same order regardless of caller-supplied order - avoiding
+// Postgres's own documented deadlock precondition for concurrent upserts
+// against overlapping rows.
+func execUpsertMany[T any](ctx context.Context, db *sql.DB, query string, items []T, argsFn func(T) []any) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	stmt, err := tx.PrepareContext(ctx, query)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("prepare: %w", err)
+	}
+	defer CloseResource(stmt)
+	for _, it := range items {
+		if _, err := stmt.ExecContext(ctx, argsFn(it)...); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("exec: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// normalizeRulesUsage de-duplicates by (Serie, Kind, GroupName, Name,
+// Expression, sorted Labels) - the ON CONFLICT target both backends upsert
+// RulesUsage against - and sorts the result by the same composite key. Both
+// backends need this identical treatment before upserting: the sort is
+// required independently of dedup, so concurrent calls with overlapping
+// rows always acquire row locks in the same order regardless of
+// caller-supplied order, avoiding Postgres's own documented deadlock
+// precondition for concurrent upserts against overlapping rows. Every field
+// in the key is part of RulesUsage's identity, so first-vs-last occurrence
+// within one call is moot for de-duplication - two "duplicate" rows are
+// identical in every field that matters.
+func normalizeRulesUsage(items []RulesUsage) ([]RulesUsage, error) {
+	type ruleKey struct {
+		Serie, Kind, Group, Name, Expression, Labels string
+	}
+	dedup := make(map[ruleKey]struct{}, len(items))
+	normalized := make([]RulesUsage, 0, len(items))
+	for _, r := range items {
+		// Normalize labels order for stable JSON equality.
+		labels := make([]string, len(r.Labels))
+		copy(labels, r.Labels)
+		sort.Strings(labels)
+		labelsJSON, err := json.Marshal(labels)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal labels to JSON: %w", err)
+		}
+		k := ruleKey{Serie: r.Serie, Kind: r.Kind, Group: r.GroupName, Name: r.Name, Expression: r.Expression, Labels: string(labelsJSON)}
+		if _, ok := dedup[k]; ok {
+			continue
+		}
+		dedup[k] = struct{}{}
+		r.Labels = labels
+		normalized = append(normalized, r)
+	}
+	sort.Slice(normalized, func(i, j int) bool {
+		a, b := normalized[i], normalized[j]
+		if a.Serie != b.Serie {
+			return a.Serie < b.Serie
+		}
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.GroupName != b.GroupName {
+			return a.GroupName < b.GroupName
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		if a.Expression != b.Expression {
+			return a.Expression < b.Expression
+		}
+		// labels is part of the ON CONFLICT target too - two rows can
+		// share every other field and still be distinct conflict targets
+		// differing only in labels. Each item's Labels is already sorted
+		// (above), so joining is a stable, comparable form.
+		return strings.Join(a.Labels, ",") < strings.Join(b.Labels, ",")
+	})
+	return normalized, nil
+}
+
+// dedupDashboardUsage de-duplicates by (Id, Serie) pair, keeping the last
+// entry, and sorts the result by the same pair - the ON CONFLICT target both
+// backends upsert DashboardUsage against. Both backends need this identical
+// treatment before upserting: the sort is required independently of dedup,
+// so concurrent calls with overlapping rows always acquire row locks in the
+// same order regardless of caller-supplied order, avoiding Postgres's own
+// documented deadlock precondition for concurrent upserts against
+// overlapping rows.
+func dedupDashboardUsage(items []DashboardUsage) []DashboardUsage {
+	type dashKey struct{ Id, Serie string }
+	dedup := make(map[dashKey]DashboardUsage, len(items))
+	for _, d := range items {
+		dedup[dashKey{Id: d.Id, Serie: d.Serie}] = d
+	}
+	out := make([]DashboardUsage, 0, len(dedup))
+	for _, d := range dedup {
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Id != out[j].Id {
+			return out[i].Id < out[j].Id
+		}
+		return out[i].Serie < out[j].Serie
+	})
+	return out
 }
 
 // GetInterval returns the appropriate interval string for time-based queries

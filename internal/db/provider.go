@@ -72,12 +72,15 @@ type Provider interface {
 // MaxPageSize limits page sizes to avoid unbounded memory allocations
 const MaxPageSize = 100
 
-// MaxSeriesMetadataPageSize is the upper bound for the programmatic seriesMetadata
-// sweep endpoint; sweet spot is 1k–5k per the bench in routes_test.go.
+// MaxSeriesMetadataPageSize is the upper bound for the programmatic
+// seriesMetadata sweep endpoint; benchmarking found 1k-5k the sweet spot,
+// with this as a safety ceiling above it.
 const MaxSeriesMetadataPageSize = 10000
 
-// ValidSeriesMetadataSortFields centralizes sortable fields for series metadata
-// Note: These should match the actual column names used in the SQL query
+// ValidSeriesMetadataSortFields whitelists sortBy values for series metadata
+// endpoints. Each key must have a corresponding entry in
+// SeriesMetadataSortAliases, which resolveSafeSortExpr looks up by this same
+// key.
 var ValidSeriesMetadataSortFields = map[string]bool{
 	"name":           true,
 	"type":           true,
@@ -254,16 +257,6 @@ func resolveSafeSortOrder(sortOrder string) string {
 	return sortOrderDESC
 }
 
-// BuildSafeOrderByClause constructs a safe ORDER BY clause using validated parameters
-// tableAlias should be the table alias (e.g., "c") or empty string if not needed
-// sortAliases optionally maps field names to their full SQL expression (e.g., "alertCount" -> "COALESCE(s.alert_count, 0)")
-func BuildSafeOrderByClause(sortBy, sortOrder, tableAlias string, validSortFields map[string]bool, defaultSort string, sortAliases ...map[string]string) string {
-	ValidateSortField(&sortBy, &sortOrder, validSortFields, defaultSort)
-	return fmt.Sprintf(" ORDER BY %s %s NULLS LAST",
-		resolveSafeSortExpr(sortBy, tableAlias, defaultSort, sortAliases...),
-		resolveSafeSortOrder(sortOrder))
-}
-
 // BuildSafeQueryWithOrderBy constructs a complete query with validated ORDER BY clause
 // This function minimizes string concatenation for better static analysis compatibility
 // sortAliases optionally maps field names to their full SQL expression for mixed-table sorting
@@ -278,22 +271,6 @@ func BuildSafeQueryWithOrderBy(baseQuery, tableAlias, limitClause string, sortBy
 
 func CalculateTotalPages(totalCount, pageSize int) int {
 	return int(math.Ceil(float64(totalCount) / float64(pageSize)))
-}
-
-func ProcessRows(rows *sql.Rows, scanFunc func(*sql.Rows) error) error {
-	defer CloseResource(rows)
-
-	for rows.Next() {
-		if err := scanFunc(rows); err != nil {
-			return ErrorWithOperation(err, "scanning row")
-		}
-	}
-
-	if err := rows.Err(); err != nil {
-		return ErrorWithOperation(err, "row iteration")
-	}
-
-	return nil
 }
 
 // QueryExpressionsParams defines parameters for aggregated query expressions grouped by fingerprint

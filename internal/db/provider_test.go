@@ -8,113 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestContainsDeniedKeyword(t *testing.T) {
-	tests := []struct {
-		name     string
-		query    string
-		expected bool
-	}{
-		{
-			name:     "valid query",
-			query:    "SELECT * FROM queries WHERE metric_name = 'up'",
-			expected: false,
-		},
-		{
-			name:     "contains DROP",
-			query:    "DROP TABLE queries",
-			expected: true,
-		},
-		{
-			name:     "contains DELETE",
-			query:    "DELETE FROM queries",
-			expected: true,
-		},
-		{
-			name:     "contains UPDATE",
-			query:    "UPDATE queries SET status = 200",
-			expected: true,
-		},
-		{
-			name:     "contains INSERT",
-			query:    "INSERT INTO queries VALUES (1, 'up')",
-			expected: true,
-		},
-		{
-			name:     "contains ALTER",
-			query:    "ALTER TABLE queries ADD COLUMN new_field",
-			expected: true,
-		},
-		{
-			name:     "contains TRUNCATE",
-			query:    "TRUNCATE TABLE queries",
-			expected: true,
-		},
-		{
-			name:     "contains EXEC",
-			query:    "EXEC stored_procedure",
-			expected: true,
-		},
-		{
-			name:     "case insensitive DROP",
-			query:    "drop table queries",
-			expected: true,
-		},
-		{
-			name:     "mixed case DELETE",
-			query:    "DeLeTe from queries",
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := containsDeniedKeyword(tt.query)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestContainsDeniedPattern(t *testing.T) {
-	tests := []struct {
-		name     string
-		query    string
-		expected bool
-	}{
-		{
-			name:     "valid query",
-			query:    "SELECT * FROM queries WHERE metric_name = 'up'",
-			expected: false,
-		},
-		{
-			name:     "contains comment",
-			query:    "SELECT * FROM queries -- comment",
-			expected: true,
-		},
-		{
-			name:     "contains semicolon",
-			query:    "SELECT * FROM queries;",
-			expected: true,
-		},
-		{
-			name:     "contains multiple semicolons",
-			query:    "SELECT * FROM queries; SELECT * FROM metrics;",
-			expected: true,
-		},
-		{
-			name:     "contains comment and semicolon",
-			query:    "SELECT * FROM queries -- comment;",
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := containsDeniedPattern(tt.query)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestValidateSQLQuery(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -127,19 +20,74 @@ func TestValidateSQLQuery(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:        "contains denied keyword",
+			name:        "empty query",
+			query:       "",
+			expectError: false,
+		},
+		{
+			name:        "contains DROP",
 			query:       "DROP TABLE queries",
 			expectError: true,
 		},
 		{
-			name:        "contains denied pattern",
+			name:        "contains DELETE",
+			query:       "DELETE FROM queries",
+			expectError: true,
+		},
+		{
+			name:        "contains UPDATE",
+			query:       "UPDATE queries SET status = 200",
+			expectError: true,
+		},
+		{
+			name:        "contains INSERT",
+			query:       "INSERT INTO queries VALUES (1, 'up')",
+			expectError: true,
+		},
+		{
+			name:        "contains ALTER",
+			query:       "ALTER TABLE queries ADD COLUMN new_field",
+			expectError: true,
+		},
+		{
+			name:        "contains TRUNCATE",
+			query:       "TRUNCATE TABLE queries",
+			expectError: true,
+		},
+		{
+			name:        "contains EXEC",
+			query:       "EXEC stored_procedure",
+			expectError: true,
+		},
+		{
+			name:        "case insensitive DROP",
+			query:       "drop table queries",
+			expectError: true,
+		},
+		{
+			name:        "mixed case DELETE",
+			query:       "DeLeTe from queries",
+			expectError: true,
+		},
+		{
+			name:        "contains comment",
 			query:       "SELECT * FROM queries -- comment",
 			expectError: true,
 		},
 		{
-			name:        "empty query",
-			query:       "",
-			expectError: false,
+			name:        "contains semicolon",
+			query:       "SELECT * FROM queries;",
+			expectError: true,
+		},
+		{
+			name:        "contains multiple semicolons",
+			query:       "SELECT * FROM queries; SELECT * FROM metrics;",
+			expectError: true,
+		},
+		{
+			name:        "contains comment and semicolon",
+			query:       "SELECT * FROM queries -- comment;",
+			expectError: true,
 		},
 	}
 
@@ -225,6 +173,93 @@ func TestValidateSortField(t *testing.T) {
 	}
 }
 
+// TestResolveSafeSortExpr covers every fallback tier of resolveSafeSortExpr.
+// This is a SQL-injection-prevention control (see its doc comment: the
+// returned string is always a static literal or a map lookup, never the
+// caller's sortBy string interpolated directly) - its fallback tiers exist
+// specifically for callers with incomplete alias maps or absent table
+// aliases, so each tier needs its own case rather than relying on whatever
+// combination the current callers happen to exercise.
+func TestResolveSafeSortExpr(t *testing.T) {
+	aliases := map[string]string{
+		"queryCount": "COALESCE(s.query_count, 0)",
+		"name":       "c.name",
+	}
+
+	tests := []struct {
+		name        string
+		sortBy      string
+		tableAlias  string
+		defaultSort string
+		sortAliases []map[string]string
+		want        string
+	}{
+		{
+			name:        "sortBy found directly in sortAliases",
+			sortBy:      "queryCount",
+			tableAlias:  "c",
+			defaultSort: "name",
+			sortAliases: []map[string]string{aliases},
+			want:        "COALESCE(s.query_count, 0)",
+		},
+		{
+			name:        "sortBy absent, defaultSort found in sortAliases",
+			sortBy:      "unknownField",
+			tableAlias:  "c",
+			defaultSort: "name",
+			sortAliases: []map[string]string{aliases},
+			want:        "c.name",
+		},
+		{
+			name:        "sortAliases provided but neither key matches - falls through to tableAlias.defaultSort",
+			sortBy:      "unknownField",
+			tableAlias:  "x",
+			defaultSort: "otherField",
+			sortAliases: []map[string]string{aliases},
+			want:        "x.otherField",
+		},
+		{
+			name:        "no sortAliases, tableAlias and defaultSort both set",
+			sortBy:      "anything",
+			tableAlias:  "c",
+			defaultSort: "name",
+			sortAliases: nil,
+			want:        "c.name",
+		},
+		{
+			name:        "nil map inside sortAliases is treated as absent",
+			sortBy:      "queryCount",
+			tableAlias:  "c",
+			defaultSort: "name",
+			sortAliases: []map[string]string{nil},
+			want:        "c.name",
+		},
+		{
+			name:        "no sortAliases, no tableAlias, defaultSort set",
+			sortBy:      "anything",
+			tableAlias:  "",
+			defaultSort: "name",
+			sortAliases: nil,
+			want:        "name",
+		},
+		{
+			name:        "nothing set at all falls back to the literal 1",
+			sortBy:      "",
+			tableAlias:  "",
+			defaultSort: "",
+			sortAliases: nil,
+			want:        "1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveSafeSortExpr(tt.sortBy, tt.tableAlias, tt.defaultSort, tt.sortAliases...)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestValidatePagination(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -282,6 +317,14 @@ func TestValidatePagination(t *testing.T) {
 			expectedPage:    1,
 			expectedSize:    10,
 		},
+		{
+			name:            "page size over MaxPageSize clamps to it",
+			page:            1,
+			pageSize:        MaxPageSize + 1,
+			defaultPageSize: 10,
+			expectedPage:    1,
+			expectedSize:    MaxPageSize,
+		},
 	}
 
 	for _, tt := range tests {
@@ -295,6 +338,47 @@ func TestValidatePagination(t *testing.T) {
 			assert.Equal(t, tt.expectedSize, pageSize)
 		})
 	}
+}
+
+// TestSetDefaultTimeRange verifies SetDefaultTimeRange fills in only the
+// zero-valued end(s) of the range, defaulting From to 30 days before now and
+// To to now, and leaves an explicitly-set From/To untouched.
+func TestSetDefaultTimeRange(t *testing.T) {
+	explicitFrom := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	explicitTo := time.Date(2020, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	t.Run("both zero get defaulted", func(t *testing.T) {
+		tr := TimeRange{}
+		SetDefaultTimeRange(&tr)
+
+		now := time.Now().UTC()
+		assert.WithinDuration(t, now.Add(-ThirtyDays), tr.From, time.Minute)
+		assert.WithinDuration(t, now, tr.To, time.Minute)
+	})
+
+	t.Run("only From zero gets defaulted, To is untouched", func(t *testing.T) {
+		tr := TimeRange{To: explicitTo}
+		SetDefaultTimeRange(&tr)
+
+		assert.WithinDuration(t, time.Now().UTC().Add(-ThirtyDays), tr.From, time.Minute)
+		assert.Equal(t, explicitTo, tr.To)
+	})
+
+	t.Run("only To zero gets defaulted, From is untouched", func(t *testing.T) {
+		tr := TimeRange{From: explicitFrom}
+		SetDefaultTimeRange(&tr)
+
+		assert.Equal(t, explicitFrom, tr.From)
+		assert.WithinDuration(t, time.Now().UTC(), tr.To, time.Minute)
+	})
+
+	t.Run("neither zero, both untouched", func(t *testing.T) {
+		tr := TimeRange{From: explicitFrom, To: explicitTo}
+		SetDefaultTimeRange(&tr)
+
+		assert.Equal(t, explicitFrom, tr.From)
+		assert.Equal(t, explicitTo, tr.To)
+	})
 }
 
 func TestCalculateTotalPages(t *testing.T) {

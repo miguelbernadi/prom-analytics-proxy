@@ -20,7 +20,7 @@
 -- goose-wrapping transaction) so the index build does not block writes
 -- from the inventory syncer while the migration runs. An earlier form
 -- of this migration ran transactional CREATE INDEX followed by ANALYZE
--- and deadlocked on cx10: a concurrent INSERT into metrics_job_index
+-- and deadlocked in production: a concurrent INSERT into metrics_job_index
 -- held a RowExclusiveLock that the in-tx ANALYZE's
 -- ShareUpdateExclusiveLock could not acquire. Planner stats refresh
 -- via autovacuum on its normal cadence; no in-line ANALYZE here.

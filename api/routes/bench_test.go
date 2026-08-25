@@ -33,8 +33,8 @@ func (p *benchDBProvider) GetSeriesMetadataByNames(_ context.Context, _ []string
 	return p.data, nil
 }
 
-func (p *benchDBProvider) Close() error                    { return nil }
-func (p *benchDBProvider) WithDB(_ func(*sql.DB))          {}
+func (p *benchDBProvider) Close() error                                 { return nil }
+func (p *benchDBProvider) WithDB(_ func(*sql.DB))                       {}
 func (p *benchDBProvider) Insert(_ context.Context, _ []db.Query) error { return nil }
 func (p *benchDBProvider) InsertRulesUsage(_ context.Context, _ []db.RulesUsage) error {
 	return nil
@@ -155,7 +155,8 @@ func seedCatalogAndJobIndex(b *testing.B, provider db.Provider, n int, job strin
 }
 
 // pageSizeCases are the page sizes benchmarked across all SeriesMetadataUnused
-// variants. 100 is the old cap (baseline); the rest exercise the new limit.
+// variants. 100 is MaxPageSize's historical value, kept as a baseline; the
+// rest exercise sizes up to MaxSeriesMetadataPageSize.
 var pageSizeCases = []int{100, 500, 1000, 5000, 10000}
 
 // seedCatalogAndSparseJobIndex seeds n catalog rows where only the first
@@ -235,16 +236,16 @@ func seedSummaryUsedRows(b *testing.B, provider db.Provider, fromIdx, toIdx int)
 		b.Fatalf("RefreshMetricsUsageSummary: %v", err)
 	}
 
-	var rawDB *sql.DB
-	provider.WithDB(func(d *sql.DB) { rawDB = d })
-	if rawDB == nil {
-		return
-	}
-	for _, table := range []string{"metrics_usage_summary", "metrics_catalog", "metrics_job_index"} {
-		if _, err := rawDB.ExecContext(ctx, "ANALYZE "+table); err != nil {
-			b.Fatalf("ANALYZE %s: %v", table, err)
+	provider.WithDB(func(rawDB *sql.DB) {
+		if rawDB == nil {
+			return
 		}
-	}
+		for _, table := range []string{"metrics_usage_summary", "metrics_catalog", "metrics_job_index"} {
+			if _, err := rawDB.ExecContext(ctx, "ANALYZE "+table); err != nil {
+				b.Fatalf("ANALYZE %s: %v", table, err)
+			}
+		}
+	})
 }
 
 // totalMetrics is the production scenario used by the pagination benchmarks:
@@ -591,12 +592,10 @@ func BenchmarkSeriesMetadataUnused_PostgreSQL_Pagination(b *testing.B) {
 }
 
 // BenchmarkSeriesMetadataUnused_SQLite_ScaleUp varies the *total* catalog
-// size while holding the number of unused metrics constant. The driving
-// question for any ?usage=unused optimization is whether per-request
-// latency scales with the unused subset (good) or with the total catalog
-// (bad — the planner is still walking metrics_catalog). The baseline on
-// main scales linearly with the total: this benchmark is the gate any
-// proposed fix must clear.
+// size while holding the number of unused metrics constant. Per-request
+// latency must scale with the unused subset, not with the total catalog -
+// latency that scales with the total (the planner still walking
+// metrics_catalog) is a regression.
 func BenchmarkSeriesMetadataUnused_SQLite_ScaleUp(b *testing.B) {
 	const job = "test-job"
 
@@ -681,8 +680,8 @@ func BenchmarkSeriesMetadataUnused_PostgreSQL_ScaleUp(b *testing.B) {
 	}
 }
 
-// BenchmarkSeriesMetadataUnused_SQLite_JobScopedScaleUp models the production
-// hot path that broke on cx10 (PR #550 deploy): ?usage=unused&job=<name>
+// BenchmarkSeriesMetadataUnused_SQLite_JobScopedScaleUp models a production
+// hot path that has regressed in practice: ?usage=unused&job=<name>
 // where the unused universe is large but only a sparse subset is tagged with
 // the requested job. ScaleUp varies the total catalog while holding the
 // target-job match count constant; if the planner drives from the job
@@ -707,9 +706,9 @@ func BenchmarkSeriesMetadataUnused_SQLite_JobScopedScaleUp(b *testing.B) {
 			// Evaluate the whole catalog via a real RefreshMetricsUsageSummary
 			// (no RulesUsage/DashboardUsage/queries seeded, so every row
 			// genuinely computes is_unused=TRUE) rather than relying on
-			// UpsertMetricsCatalog's placeholder default, which now defaults
-			// to is_unused=FALSE (unevaluated) precisely so it can't be
-			// mistaken for a confirmed-unused row. See
+			// UpsertMetricsCatalog's placeholder default (is_unused=FALSE,
+			// unevaluated), which exists precisely so it can't be mistaken
+			// for a confirmed-unused row. See
 			// https://github.com/nicolastakashi/prom-analytics-proxy/issues/570.
 			if err := provider.RefreshMetricsUsageSummary(context.Background(), db.TimeRange{
 				From: time.Now().Add(-time.Hour),
@@ -718,16 +717,17 @@ func BenchmarkSeriesMetadataUnused_SQLite_JobScopedScaleUp(b *testing.B) {
 				b.Fatalf("RefreshMetricsUsageSummary: %v", err)
 			}
 
-			var rawDB *sql.DB
-			provider.WithDB(func(d *sql.DB) { rawDB = d })
-			if rawDB != nil {
+			provider.WithDB(func(rawDB *sql.DB) {
+				if rawDB == nil {
+					return
+				}
 				ctx := context.Background()
 				for _, t := range []string{"metrics_usage_summary", "metrics_catalog", "metrics_job_index"} {
 					if _, err := rawDB.ExecContext(ctx, "ANALYZE "+t); err != nil {
 						b.Fatalf("ANALYZE %s: %v", t, err)
 					}
 				}
-			}
+			})
 
 			handler, err := NewRoutes(
 				WithDBProvider(provider),
@@ -772,7 +772,7 @@ func BenchmarkSeriesMetadataUnused_PostgreSQL_JobScopedScaleUp(b *testing.B) {
 			seedCatalogAndSparseJobIndex(b, provider, totalN, scaleUpUnusedN, targetJob, noiseJob)
 			// See the SQLite JobScopedScaleUp benchmark's comment: this
 			// evaluates the whole catalog for real instead of relying on the
-			// (now unevaluated-by-default) placeholder rows.
+			// unevaluated-by-default placeholder rows.
 			if err := provider.RefreshMetricsUsageSummary(context.Background(), db.TimeRange{
 				From: time.Now().Add(-time.Hour),
 				To:   time.Now().Add(time.Hour),
@@ -780,16 +780,17 @@ func BenchmarkSeriesMetadataUnused_PostgreSQL_JobScopedScaleUp(b *testing.B) {
 				b.Fatalf("RefreshMetricsUsageSummary: %v", err)
 			}
 
-			var rawDB *sql.DB
-			provider.WithDB(func(d *sql.DB) { rawDB = d })
-			if rawDB != nil {
+			provider.WithDB(func(rawDB *sql.DB) {
+				if rawDB == nil {
+					return
+				}
 				ctx := context.Background()
 				for _, t := range []string{"metrics_usage_summary", "metrics_catalog", "metrics_job_index"} {
 					if _, err := rawDB.ExecContext(ctx, "ANALYZE "+t); err != nil {
 						b.Fatalf("ANALYZE %s: %v", t, err)
 					}
 				}
-			}
+			})
 
 			handler, err := NewRoutes(
 				WithDBProvider(provider),
@@ -826,9 +827,8 @@ var denseUnusedPageSizes = []int{10, 1000, 10000}
 // BenchmarkSeriesMetadataUnused_SQLite_DenseUnusedScaleUp benches
 // ?usage=unused without a job filter when most of the catalog is unused -
 // the dashboard / CLI shape, and the inverse of both ScaleUp (sparse
-// unused) and JobScopedScaleUp (sparse job-match). cx10 reported 18.8s
-// for ?usage=unused&pageSize=10000 on ~139k unused metrics after PR #550
-// deployed; this bench reproduces that shape locally so any fix can be
+// unused) and JobScopedScaleUp (sparse job-match). This shape has been slow
+// in production; this bench reproduces it locally so any fix can be
 // verified without round-tripping to the cluster.
 //
 // Seeds totalN catalog rows, then marks only the first 100 as used. The
