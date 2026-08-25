@@ -15,6 +15,7 @@ import (
 // provider does with it; there is nothing
 // provider-specific to test separately.
 func TestGetInterval(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	tests := []struct {
@@ -59,6 +60,7 @@ func TestGetInterval(t *testing.T) {
 // and wraps the driver's error via QueryError, rather than passing it
 // through raw, when the query itself fails.
 func TestExecuteQuery(t *testing.T) {
+	t.Parallel()
 	db, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)
 	defer func() { _ = db.Close() }()
@@ -84,6 +86,7 @@ func TestExecuteQuery(t *testing.T) {
 // result set, and wraps a scan failure via ErrorWithOperation rather than
 // passing it through raw.
 func TestScanSingleRow(t *testing.T) {
+	t.Parallel()
 	db, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)
 	defer func() { _ = db.Close() }()

@@ -29,49 +29,67 @@ func newTestSQLiteProvider(t *testing.T) (Provider, func()) {
 
 // -------------------- Analytics --------------------
 
-func TestSQLite_GetQueryTypes(t *testing.T) { testGetQueryTypes(t, newTestSQLiteProvider) }
+func TestSQLite_GetQueryTypes(t *testing.T) {
+	t.Parallel()
+	testGetQueryTypes(t, newTestSQLiteProvider)
+}
 
-func TestSQLite_GetAverageDuration(t *testing.T) { testGetAverageDuration(t, newTestSQLiteProvider) }
+func TestSQLite_GetAverageDuration(t *testing.T) {
+	t.Parallel()
+	testGetAverageDuration(t, newTestSQLiteProvider)
+}
 
-func TestSQLite_GetQueryRate(t *testing.T) { testGetQueryRate(t, newTestSQLiteProvider) }
+func TestSQLite_GetQueryRate(t *testing.T) {
+	t.Parallel()
+	testGetQueryRate(t, newTestSQLiteProvider)
+}
 
 func TestSQLite_GetQueryLatencyTrends_And_Throughput_And_Errors(t *testing.T) {
+	t.Parallel()
 	testGetQueryLatencyTrendsAndThroughputAndErrors(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_AnalyticsMethodsOnEmptyDatabase(t *testing.T) {
+	t.Parallel()
 	testAnalyticsMethodsOnEmptyDatabase(t, newTestSQLiteProvider)
 }
 
 // -------------------- Aggregations --------------------
 
 func TestSQLite_GetQueriesBySerieName(t *testing.T) {
+	t.Parallel()
 	testGetQueriesBySerieName(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_GetQueriesBySerieName_Pagination(t *testing.T) {
+	t.Parallel()
 	testGetQueriesBySerieNamePagination(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_GetQueryExpressions_And_Executions(t *testing.T) {
+	t.Parallel()
 	testGetQueryExpressionsAndExecutions(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_GetQueryExpressions_Pagination(t *testing.T) {
+	t.Parallel()
 	testGetQueryExpressionsPagination(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_GetQueryExecutions_Pagination_TypeFilter_And_HTTPHeaders(t *testing.T) {
+	t.Parallel()
 	testGetQueryExecutionsPaginationTypeFilterAndHTTPHeaders(t, newTestSQLiteProvider)
 }
 
 // -------------------- Metrics Inventory --------------------
 
 func TestSQLite_MetricsJobIndex_And_ListJobs(t *testing.T) {
+	t.Parallel()
 	testMetricsJobIndexAndListJobs(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_RefreshMetricsUsageSummary_And_GetSeriesMetadata(t *testing.T) {
+	t.Parallel()
 	testRefreshMetricsUsageSummaryAndGetSeriesMetadata(t, newTestSQLiteProvider)
 }
 
@@ -101,6 +119,7 @@ func mustSummaryRowSQLite(t *testing.T, p Provider, name string) summaryRow {
 // https://github.com/nicolastakashi/prom-analytics-proxy/issues/570:
 // "never evaluated" is distinct from "confirmed unused").
 func TestSQLite_RefreshMetricsUsageSummary_ExcludesStaleCatalogRows(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestSQLiteProvider(t)
 	defer cleanup()
 
@@ -151,6 +170,7 @@ func TestSQLite_RefreshMetricsUsageSummary_ExcludesStaleCatalogRows(t *testing.T
 // count toward alert_count/record_count. See
 // https://github.com/nicolastakashi/prom-analytics-proxy/issues/589.
 func TestSQLite_RefreshMetricsUsageSummary_ExcludesOutOfWindowRulesUsage(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestSQLiteProvider(t)
 	defer cleanup()
 
@@ -247,24 +267,29 @@ func TestSQLite_RefreshMetricsUsageSummary_NoWarnOnEmptyCatalog(t *testing.T) {
 }
 
 func TestSQLite_GetMetricStatistics_And_QueryPerformanceStats(t *testing.T) {
+	t.Parallel()
 	testGetMetricStatisticsAndQueryPerformanceStats(t, newTestSQLiteProvider)
 }
 
 // -------------------- Rules & Dashboards --------------------
 
 func TestSQLite_InsertRulesUsage_GetRulesUsage(t *testing.T) {
+	t.Parallel()
 	testInsertRulesUsageGetRulesUsage(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_GetRulesUsage_SortFieldsAndPagination(t *testing.T) {
+	t.Parallel()
 	testGetRulesUsageSortFieldsAndPagination(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_InsertDashboardUsage_UpsertBehavior(t *testing.T) {
+	t.Parallel()
 	testInsertDashboardUsageUpsertBehavior(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_GetDashboardUsage_SortFieldsAndPagination(t *testing.T) {
+	t.Parallel()
 	testGetDashboardUsageSortFieldsAndPagination(t, newTestSQLiteProvider)
 }
 
@@ -275,6 +300,7 @@ func TestSQLite_GetDashboardUsage_SortFieldsAndPagination(t *testing.T) {
 // ValidateSortField for the same default/whitelist guarantee, including
 // correct handling of uppercase input.
 func TestSQLite_GetRulesUsage_MaliciousSortOrderDoesNotBreakQuery(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestSQLiteProvider(t)
 	defer cleanup()
 
@@ -306,6 +332,7 @@ func TestSQLite_GetRulesUsage_MaliciousSortOrderDoesNotBreakQuery(t *testing.T) 
 // counterpart; see TestSQLite_GetRulesUsage_MaliciousSortOrderDoesNotBreakQuery
 // for why SQLite was never exploitable the same way.
 func TestSQLite_GetDashboardUsage_MaliciousSortOrderDoesNotBreakQuery(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestSQLiteProvider(t)
 	defer cleanup()
 
@@ -334,22 +361,27 @@ func TestSQLite_GetDashboardUsage_MaliciousSortOrderDoesNotBreakQuery(t *testing
 // -------------------- Metrics catalog / inventory / usage --------------------
 
 func TestSQLite_HistogramSummaryMetricsCatalog(t *testing.T) {
+	t.Parallel()
 	testHistogramSummaryMetricsCatalog(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_MetricsInventoryAndList(t *testing.T) {
+	t.Parallel()
 	testMetricsInventoryAndList(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_GetSeriesMetadata_UsageFilters(t *testing.T) {
+	t.Parallel()
 	testGetSeriesMetadataUsageFilters(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_GetSeriesMetadata_EmptyResults(t *testing.T) {
+	t.Parallel()
 	testGetSeriesMetadataEmptyResults(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_GetSeriesMetadataUnusedJobScoped(t *testing.T) {
+	t.Parallel()
 	testGetSeriesMetadataUnusedJobScoped(t, newTestSQLiteProvider)
 }
 
@@ -362,6 +394,7 @@ func TestSQLite_GetSeriesMetadataUnusedJobScoped(t *testing.T) {
 // never been evaluated is not the same thing as a metric confirmed to have
 // zero usage. See https://github.com/nicolastakashi/prom-analytics-proxy/issues/570.
 func TestSQLite_UpsertMetricsCatalog_CreatesDefaultUnusedSummaryRow(t *testing.T) {
+	t.Parallel()
 	testUpsertMetricsCatalogCreatesDefaultUnusedSummaryRow(t, newTestSQLiteProvider)
 }
 
@@ -373,6 +406,7 @@ func TestSQLite_UpsertMetricsCatalog_CreatesDefaultUnusedSummaryRow(t *testing.T
 // rather than an explicit de-duplication step - worth pinning directly since
 // the two backends reach it by different means.
 func TestSQLite_UpsertMetricsCatalog_DuplicateNameInSameCall_LastOccurrenceWins(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestSQLiteProvider(t)
 	defer cleanup()
 
@@ -398,6 +432,7 @@ func TestSQLite_UpsertMetricsCatalog_DuplicateNameInSameCall_LastOccurrenceWins(
 // call must be persisted, not just some of them silently dropped by a race
 // the mutex was supposed to prevent.
 func TestSQLite_ConcurrentWritesDoNotLoseRows(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestSQLiteProvider(t)
 	defer cleanup()
 
@@ -444,11 +479,13 @@ func TestSQLite_ConcurrentWritesDoNotLoseRows(t *testing.T) {
 // recompute it from the four usage counts - counts alone cannot distinguish
 // "evaluated, confirmed zero usage" from "never evaluated yet".
 func TestSQLite_GetSeriesMetadataByNames_PopulatesIsUnused(t *testing.T) {
+	t.Parallel()
 	testGetSeriesMetadataByNamesPopulatesIsUnused(t, newTestSQLiteProvider)
 }
 
 // TestSQLite_DashboardUsage verifies dashboard usage time range filtering
 func TestSQLite_DashboardUsage(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestSQLiteProvider(t)
 	defer cleanup()
 
@@ -617,10 +654,12 @@ func TestSQLite_DashboardUsage(t *testing.T) {
 
 // TestSQLite_QueryTimeRangeDistribution verifies bucketed counts and percents for range queries
 func TestSQLite_QueryTimeRangeDistribution(t *testing.T) {
+	t.Parallel()
 	testQueryTimeRangeDistribution(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_TimeRangeDistribution_ISO_TZ(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestSQLiteProvider(t)
 	defer cleanup()
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -673,6 +712,7 @@ func TestSQLite_TimeRangeDistribution_ISO_TZ(t *testing.T) {
 }
 
 func TestSQLiteProvider_DeleteQueriesBefore(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestSQLiteProvider(t)
 	defer cleanup()
 
@@ -734,9 +774,11 @@ func TestSQLiteProvider_DeleteQueriesBefore(t *testing.T) {
 }
 
 func TestSQLite_WriteMethodsFailCleanlyOnCancelledContext(t *testing.T) {
+	t.Parallel()
 	testWriteMethodsFailCleanlyOnCancelledContext(t, newTestSQLiteProvider)
 }
 
 func TestSQLite_WriteMethodsNoOpOnEmptyInput(t *testing.T) {
+	t.Parallel()
 	testWriteMethodsNoOpOnEmptyInput(t, newTestSQLiteProvider)
 }

@@ -9,6 +9,7 @@ import (
 )
 
 func TestValidationError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		field    string
@@ -44,6 +45,7 @@ func TestValidationError(t *testing.T) {
 }
 
 func TestErrorWithOperation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		err       error
@@ -85,6 +87,7 @@ func TestErrorWithOperation(t *testing.T) {
 }
 
 func TestCloseResource(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		resource    io.Closer
@@ -113,6 +116,7 @@ func TestCloseResource(t *testing.T) {
 }
 
 func TestIsNoResults(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		err      error
@@ -144,6 +148,7 @@ func TestIsNoResults(t *testing.T) {
 }
 
 func TestQueryError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		err       error
@@ -176,6 +181,7 @@ func TestQueryError(t *testing.T) {
 }
 
 func TestConnectionError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		err      error
@@ -208,6 +214,7 @@ func TestConnectionError(t *testing.T) {
 }
 
 func TestSchemaError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		err       error
@@ -240,6 +247,7 @@ func TestSchemaError(t *testing.T) {
 }
 
 func TestErrorTypes_Unwrap(t *testing.T) {
+	t.Parallel()
 	originalErr := errors.New("original error")
 
 	validationErr := ValidationError("field", "message")
@@ -255,6 +263,7 @@ func TestErrorTypes_Unwrap(t *testing.T) {
 }
 
 func TestErrorTypes_Comparison(t *testing.T) {
+	t.Parallel()
 	err1 := ValidationError("field", "message")
 	err2 := ValidationError("field", "message")
 	err3 := ValidationError("different", "message")
@@ -264,12 +273,14 @@ func TestErrorTypes_Comparison(t *testing.T) {
 }
 
 func TestErrorTypes_Formatting(t *testing.T) {
+	t.Parallel()
 	err := ValidationError("field name", "message with 'quotes' and \"double quotes\"")
 	assert.Contains(t, err.Error(), "field name")
 	assert.Contains(t, err.Error(), "message with 'quotes' and \"double quotes\"")
 }
 
 func TestErrorTypes_EmptyValues(t *testing.T) {
+	t.Parallel()
 	validationErr := ValidationError("", "")
 	assert.Equal(t, "validation error for : ", validationErr.Error())
 
@@ -278,12 +289,14 @@ func TestErrorTypes_EmptyValues(t *testing.T) {
 }
 
 func TestErrorTypes_UnicodeSupport(t *testing.T) {
+	t.Parallel()
 	err := ValidationError("fält", "meddelande med åäö")
 	assert.Contains(t, err.Error(), "fält")
 	assert.Contains(t, err.Error(), "meddelande med åäö")
 }
 
 func TestErrorTypes_LongMessages(t *testing.T) {
+	t.Parallel()
 	longMessage := "This is a very long error message that contains many characters and should be handled properly by the error system without any issues or truncation"
 	err := ValidationError("field", longMessage)
 	assert.Contains(t, err.Error(), longMessage)
@@ -291,6 +304,7 @@ func TestErrorTypes_LongMessages(t *testing.T) {
 }
 
 func TestStandardErrors(t *testing.T) {
+	t.Parallel()
 	assert.Error(t, ErrNoResults)
 	assert.Error(t, ErrInvalidScan)
 	assert.Error(t, ErrInvalidQuery)

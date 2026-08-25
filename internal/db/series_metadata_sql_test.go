@@ -16,6 +16,7 @@ import (
 // predicate, the job filter, and placeholder count - as a fast unit-level
 // check for SQL string drift, with no container required.
 func TestSeriesMetadataSQLConsts_Shape(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		sql      string
@@ -178,6 +179,7 @@ func TestSeriesMetadataSQLConsts_Shape(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			for _, sub := range tc.wantSubs {
 				assert.Contains(t, tc.sql, sub, "missing expected substring")
 			}
@@ -209,6 +211,7 @@ func TestSeriesMetadataSQLConsts_Shape(t *testing.T) {
 // where a const accidentally references a missing column or where the
 // dynamic ORDER BY emission produces a syntactically invalid query.
 func TestSeriesMetadataSQLConsts_PreparesSQLite(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestSQLiteProvider(t)
 	t.Cleanup(cleanup)
 
@@ -283,6 +286,7 @@ func TestSeriesMetadataSQLConsts_PreparesSQLite(t *testing.T) {
 // not available (matches the pattern used by the other postgresql_test.go
 // suites).
 func TestSeriesMetadataSQLConsts_PreparesPostgreSQL(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	t.Cleanup(cleanup)
 

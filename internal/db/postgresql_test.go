@@ -139,6 +139,7 @@ func assertConcurrentOverlappingUpsertsDoNotDeadlock[T any](
 // NewPostgreSQLProvider uses only the supplied config and leaves
 // config.DefaultConfig untouched.
 func TestNewPostgreSQLProvider_DoesNotMutateGlobalConfig(t *testing.T) {
+	t.Parallel()
 	prov, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 
@@ -153,51 +154,67 @@ func TestNewPostgreSQLProvider_DoesNotMutateGlobalConfig(t *testing.T) {
 	}
 }
 
-func TestPostgreSQL_GetQueryTypes(t *testing.T) { testGetQueryTypes(t, newTestPostgreSQLProvider) }
+func TestPostgreSQL_GetQueryTypes(t *testing.T) {
+	t.Parallel()
+	testGetQueryTypes(t, newTestPostgreSQLProvider)
+}
 
 func TestPostgreSQL_GetAverageDuration(t *testing.T) {
+	t.Parallel()
 	testGetAverageDuration(t, newTestPostgreSQLProvider)
 }
 
-func TestPostgreSQL_GetQueryRate(t *testing.T) { testGetQueryRate(t, newTestPostgreSQLProvider) }
+func TestPostgreSQL_GetQueryRate(t *testing.T) {
+	t.Parallel()
+	testGetQueryRate(t, newTestPostgreSQLProvider)
+}
 
 func TestPostgreSQL_GetQueryLatencyTrends_And_Throughput_And_Errors(t *testing.T) {
+	t.Parallel()
 	testGetQueryLatencyTrendsAndThroughputAndErrors(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_AnalyticsMethodsOnEmptyDatabase(t *testing.T) {
+	t.Parallel()
 	testAnalyticsMethodsOnEmptyDatabase(t, newTestPostgreSQLProvider)
 }
 
 // -------------------- Aggregations --------------------
 
 func TestPostgreSQL_GetQueriesBySerieName(t *testing.T) {
+	t.Parallel()
 	testGetQueriesBySerieName(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_GetQueriesBySerieName_Pagination(t *testing.T) {
+	t.Parallel()
 	testGetQueriesBySerieNamePagination(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_GetQueryExpressions_And_Executions(t *testing.T) {
+	t.Parallel()
 	testGetQueryExpressionsAndExecutions(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_GetQueryExpressions_Pagination(t *testing.T) {
+	t.Parallel()
 	testGetQueryExpressionsPagination(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_GetQueryExecutions_Pagination_TypeFilter_And_HTTPHeaders(t *testing.T) {
+	t.Parallel()
 	testGetQueryExecutionsPaginationTypeFilterAndHTTPHeaders(t, newTestPostgreSQLProvider)
 }
 
 // -------------------- Metrics Inventory --------------------
 
 func TestPostgreSQL_MetricsJobIndex_And_ListJobs(t *testing.T) {
+	t.Parallel()
 	testMetricsJobIndexAndListJobs(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_RefreshMetricsUsageSummary_And_GetSeriesMetadata(t *testing.T) {
+	t.Parallel()
 	testRefreshMetricsUsageSummaryAndGetSeriesMetadata(t, newTestPostgreSQLProvider)
 }
 
@@ -220,6 +237,7 @@ func mustSummaryRowPostgreSQL(t *testing.T, p Provider, name string) summaryRow 
 // PostgreSQL counterpart of TestSQLite_RefreshMetricsUsageSummary_ExcludesStaleCatalogRows:
 // see there for the full rationale.
 func TestPostgreSQL_RefreshMetricsUsageSummary_ExcludesStaleCatalogRows(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 
@@ -266,6 +284,7 @@ func TestPostgreSQL_RefreshMetricsUsageSummary_ExcludesStaleCatalogRows(t *testi
 // count toward alert_count/record_count. See
 // https://github.com/nicolastakashi/prom-analytics-proxy/issues/589.
 func TestPostgreSQL_RefreshMetricsUsageSummary_ExcludesOutOfWindowRulesUsage(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 
@@ -316,6 +335,7 @@ func TestPostgreSQL_RefreshMetricsUsageSummary_ExcludesOutOfWindowRulesUsage(t *
 // vacuously - so the database default is pinned to a fixed, DST-free non-UTC
 // offset before the provider (and its connection pool) ever connects.
 func TestPostgreSQL_UpsertMetricsCatalog_LastSyncedAtIsUTC(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	host, portNum, terminate := newRawPostgresContainer(t)
 	defer terminate()
@@ -356,24 +376,29 @@ func TestPostgreSQL_UpsertMetricsCatalog_LastSyncedAtIsUTC(t *testing.T) {
 }
 
 func TestPostgreSQL_GetMetricStatistics_And_QueryPerformanceStats(t *testing.T) {
+	t.Parallel()
 	testGetMetricStatisticsAndQueryPerformanceStats(t, newTestPostgreSQLProvider)
 }
 
 // -------------------- Rules & Dashboards --------------------
 
 func TestPostgreSQL_InsertRulesUsage_GetRulesUsage(t *testing.T) {
+	t.Parallel()
 	testInsertRulesUsageGetRulesUsage(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_GetRulesUsage_SortFieldsAndPagination(t *testing.T) {
+	t.Parallel()
 	testGetRulesUsageSortFieldsAndPagination(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_InsertDashboardUsage_UpsertBehavior(t *testing.T) {
+	t.Parallel()
 	testInsertDashboardUsageUpsertBehavior(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_GetDashboardUsage_SortFieldsAndPagination(t *testing.T) {
+	t.Parallel()
 	testGetDashboardUsageSortFieldsAndPagination(t, newTestPostgreSQLProvider)
 }
 
@@ -383,6 +408,7 @@ func TestPostgreSQL_GetDashboardUsage_SortFieldsAndPagination(t *testing.T) {
 // order, like every other paginated method already routed through
 // ValidateSortField's whitelist.
 func TestPostgreSQL_GetRulesUsage_MaliciousSortOrderDoesNotBreakQuery(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 
@@ -413,6 +439,7 @@ func TestPostgreSQL_GetRulesUsage_MaliciousSortOrderDoesNotBreakQuery(t *testing
 // TestPostgreSQL_GetRulesUsage_MaliciousSortOrderDoesNotBreakQuery's
 // counterpart for GetDashboardUsage, guarding the same injection class.
 func TestPostgreSQL_GetDashboardUsage_MaliciousSortOrderDoesNotBreakQuery(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 
@@ -442,6 +469,7 @@ func TestPostgreSQL_GetDashboardUsage_MaliciousSortOrderDoesNotBreakQuery(t *tes
 // verifies InsertRulesUsage tolerates concurrent calls upserting
 // overlapping rows in different orders without deadlocking.
 func TestPostgreSQL_InsertRulesUsage_ConcurrentOverlappingUpsertsDoNotDeadlock(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 
@@ -460,6 +488,7 @@ func TestPostgreSQL_InsertRulesUsage_ConcurrentOverlappingUpsertsDoNotDeadlock(t
 // verifies InsertDashboardUsage tolerates concurrent calls upserting
 // overlapping rows in different orders without deadlocking.
 func TestPostgreSQL_InsertDashboardUsage_ConcurrentOverlappingUpsertsDoNotDeadlock(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 
@@ -474,22 +503,27 @@ func TestPostgreSQL_InsertDashboardUsage_ConcurrentOverlappingUpsertsDoNotDeadlo
 // -------------------- Metrics catalog / inventory / usage --------------------
 
 func TestPostgreSQL_HistogramSummaryMetricsCatalog(t *testing.T) {
+	t.Parallel()
 	testHistogramSummaryMetricsCatalog(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_MetricsInventoryAndList(t *testing.T) {
+	t.Parallel()
 	testMetricsInventoryAndList(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_GetSeriesMetadata_UsageFilters(t *testing.T) {
+	t.Parallel()
 	testGetSeriesMetadataUsageFilters(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_GetSeriesMetadata_EmptyResults(t *testing.T) {
+	t.Parallel()
 	testGetSeriesMetadataEmptyResults(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_GetSeriesMetadataUnusedJobScoped(t *testing.T) {
+	t.Parallel()
 	testGetSeriesMetadataUnusedJobScoped(t, newTestPostgreSQLProvider)
 }
 
@@ -502,6 +536,7 @@ func TestPostgreSQL_GetSeriesMetadataUnusedJobScoped(t *testing.T) {
 // never been evaluated is not the same thing as a metric confirmed to have
 // zero usage. See https://github.com/nicolastakashi/prom-analytics-proxy/issues/570.
 func TestPostgreSQL_UpsertMetricsCatalog_CreatesDefaultUnusedSummaryRow(t *testing.T) {
+	t.Parallel()
 	testUpsertMetricsCatalogCreatesDefaultUnusedSummaryRow(t, newTestPostgreSQLProvider)
 }
 
@@ -509,6 +544,7 @@ func TestPostgreSQL_UpsertMetricsCatalog_CreatesDefaultUnusedSummaryRow(t *testi
 // verifies UpsertMetricsCatalog tolerates concurrent calls upserting
 // overlapping rows in different orders without deadlocking.
 func TestPostgreSQL_UpsertMetricsCatalog_ConcurrentOverlappingUpsertsDoNotDeadlock(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 
@@ -528,6 +564,7 @@ func TestPostgreSQL_UpsertMetricsCatalog_ConcurrentOverlappingUpsertsDoNotDeadlo
 // UPDATE command cannot affect row a second time"), so de-duplicating
 // before upserting is required independently of the deadlock fix itself.
 func TestPostgreSQL_UpsertMetricsCatalog_DuplicateNameInSameCall_LastOccurrenceWins(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 
@@ -555,6 +592,7 @@ func TestPostgreSQL_UpsertMetricsCatalog_DuplicateNameInSameCall_LastOccurrenceW
 // helps where types belongs) would compile fine and silently misfile
 // every row's fields.
 func TestPostgreSQL_UpsertMetricsCatalog_ManyRows_EachRowGetsItsOwnValues(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 
@@ -583,6 +621,7 @@ func TestPostgreSQL_UpsertMetricsCatalog_ManyRows_EachRowGetsItsOwnValues(t *tes
 // verifies UpsertMetricsJobIndex tolerates concurrent calls upserting
 // overlapping rows in different orders without deadlocking.
 func TestPostgreSQL_UpsertMetricsJobIndex_ConcurrentOverlappingUpsertsDoNotDeadlock(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 
@@ -601,10 +640,12 @@ func TestPostgreSQL_UpsertMetricsJobIndex_ConcurrentOverlappingUpsertsDoNotDeadl
 // recompute it from the four usage counts - counts alone cannot distinguish
 // "evaluated, confirmed zero usage" from "never evaluated yet".
 func TestPostgreSQL_GetSeriesMetadataByNames_PopulatesIsUnused(t *testing.T) {
+	t.Parallel()
 	testGetSeriesMetadataByNamesPopulatesIsUnused(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_DashboardUsage(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 
@@ -718,10 +759,12 @@ func TestPostgreSQL_DashboardUsage(t *testing.T) {
 }
 
 func TestPostgreSQL_QueryTimeRangeDistribution(t *testing.T) {
+	t.Parallel()
 	testQueryTimeRangeDistribution(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_TimeRangeDistribution_ISO_TZ(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -765,6 +808,7 @@ func TestPostgreSQL_TimeRangeDistribution_ISO_TZ(t *testing.T) {
 }
 
 func TestPostgreSQLProvider_DeleteQueriesBefore(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -820,6 +864,7 @@ func TestPostgreSQLProvider_DeleteQueriesBefore(t *testing.T) {
 }
 
 func TestPostgreSQL_StatementTimeoutAborts(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	host, portNum, terminate := newRawPostgresContainer(t)
 	defer terminate()
@@ -856,10 +901,12 @@ func TestPostgreSQL_StatementTimeoutAborts(t *testing.T) {
 }
 
 func TestPostgreSQL_WriteMethodsFailCleanlyOnCancelledContext(t *testing.T) {
+	t.Parallel()
 	testWriteMethodsFailCleanlyOnCancelledContext(t, newTestPostgreSQLProvider)
 }
 
 func TestPostgreSQL_WriteMethodsNoOpOnEmptyInput(t *testing.T) {
+	t.Parallel()
 	testWriteMethodsNoOpOnEmptyInput(t, newTestPostgreSQLProvider)
 }
 
@@ -871,6 +918,7 @@ func TestPostgreSQL_WriteMethodsNoOpOnEmptyInput(t *testing.T) {
 // range enforcement, so the same batch succeeds there (verified directly;
 // not a difference this test can meaningfully assert on the SQLite side).
 func TestPostgreSQL_Insert_RollsBackOnConstraintViolation(t *testing.T) {
+	t.Parallel()
 	p, cleanup := newTestPostgreSQLProvider(t)
 	defer cleanup()
 

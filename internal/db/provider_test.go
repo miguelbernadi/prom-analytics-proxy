@@ -9,6 +9,7 @@ import (
 )
 
 func TestValidateSQLQuery(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		query       string
@@ -104,6 +105,7 @@ func TestValidateSQLQuery(t *testing.T) {
 }
 
 func TestValidateSortField(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		sortBy         string
@@ -181,6 +183,7 @@ func TestValidateSortField(t *testing.T) {
 // aliases, so each tier needs its own case rather than relying on whatever
 // combination the current callers happen to exercise.
 func TestResolveSafeSortExpr(t *testing.T) {
+	t.Parallel()
 	aliases := map[string]string{
 		"queryCount": "COALESCE(s.query_count, 0)",
 		"name":       "c.name",
@@ -261,6 +264,7 @@ func TestResolveSafeSortExpr(t *testing.T) {
 }
 
 func TestValidatePagination(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name            string
 		page            int
@@ -344,6 +348,7 @@ func TestValidatePagination(t *testing.T) {
 // zero-valued end(s) of the range, defaulting From to 30 days before now and
 // To to now, and leaves an explicitly-set From/To untouched.
 func TestSetDefaultTimeRange(t *testing.T) {
+	t.Parallel()
 	explicitFrom := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	explicitTo := time.Date(2020, 6, 1, 0, 0, 0, 0, time.UTC)
 
@@ -382,6 +387,7 @@ func TestSetDefaultTimeRange(t *testing.T) {
 }
 
 func TestCalculateTotalPages(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		totalCount int
@@ -429,6 +435,7 @@ func TestCalculateTotalPages(t *testing.T) {
 }
 
 func TestTimeRange_Format(t *testing.T) {
+	t.Parallel()
 	tr := TimeRange{
 		From: time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
 		To:   time.Date(2023, 1, 15, 12, 0, 0, 0, time.UTC),
@@ -444,6 +451,7 @@ func TestTimeRange_Format(t *testing.T) {
 }
 
 func TestTimeRange_Previous(t *testing.T) {
+	t.Parallel()
 	tr := TimeRange{
 		From: time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
 		To:   time.Date(2023, 1, 15, 12, 0, 0, 0, time.UTC),
@@ -459,6 +467,7 @@ func TestTimeRange_Previous(t *testing.T) {
 }
 
 func TestGetDbProvider(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		provider    DatabaseProvider
